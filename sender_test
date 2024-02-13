@@ -1,0 +1,84 @@
+
+import asyncio
+import socket
+import time
+
+async def send_data(stream_socket, file_path, port, bytes_counters, total_bytes_counter, packets_counters, total_packets_counter):
+    start_time = time.time()  # Record the start time for calculating duration
+    total_bytes = 0  # Variable to store total bytes for the current stream
+    total_packets = 0  # Variable to store total packets for the current stream
+
+    with open(file_path, 'rb') as file:
+        while True:
+            chunk = file.read(1024)
+            if not chunk:
+                break
+            bytes_counters[port] += len(chunk)  # Increment the counter by the size of the chunk
+            total_bytes_counter[0] += len(chunk)  # Increment the total byte counter
+            total_bytes += len(chunk)  # Increment the total byte counter for the current stream
+
+            packet_size = len(chunk) // 1024 + 1  # Calculate packet size
+            packets_counters[port] += packet_size  # Increment the counter by the size of the packet
+            total_packets_counter[0] += packet_size  # Increment the total packet counter
+            total_packets += packet_size  # Increment the total packet counter for the current stream
+
+            stream_socket.sendto(chunk, ('localhost', port))
+            # print(f"Bytes passed in stream on port {port}: {len(chunk)}")  # Print bytes passed in each stream
+            await asyncio.sleep(0)  # Allow other tasks to run
+
+    end_time = time.time()  # Record the end time for calculating duration
+    duration = end_time - start_time  # Calculate the duration of sending
+    print(f"Total bytes passed in each flow: {total_bytes_counter[0]}")
+    print(f"Total bytes in stream on port {port}: {total_bytes}")
+    print(f"Average data rate (bytes per second) for stream on port {port}: {total_bytes / duration}")
+
+    # print(f"Total packets in stream on port {port}: {total_packets}")
+    print(f"Average packet rate (packets per second) for stream on port {port}: {total_packets / duration}")
+
+    # Calculate total data rate
+    total_data_rate = total_bytes_counter[0] / duration
+    print(f"Total data rate (bytes per second): {total_data_rate}")
+
+    # Calculate total packet rate
+    total_packet_rate = total_packets_counter[0] / duration
+    print(f"Total packet rate (packets per second): {total_packet_rate}")
+
+    stream_socket.sendto("EXIT".encode(), ('localhost', port))
+
+async def send_file(file_path, num_streams):
+    # Create UDP socket for sending the number of streams
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    # Server address and port
+    server_address = ('localhost', 12345)
+
+    try:
+        # Send number of streams
+        client_socket.sendto(f"NUM_STREAMS:{num_streams}".encode(), server_address)
+
+        # Start a coroutine for each stream and send file data
+        coroutines = []
+        bytes_counters = {54321 + i: 0 for i in range(num_streams)}  # Initialize byte counters for each stream
+        total_bytes_counter = [0]  # Initialize the total byte counter
+        packets_counters = {54321 + i: 0 for i in range(num_streams)}  # Initialize packet counters for each stream
+        total_packets_counter = [0]  # Initialize the total packet counter
+        for port in bytes_counters:
+            stream_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            client_socket.sendto(f"STREAM_PORT:{port}".encode(), server_address)  # Notify receiver of port
+            coroutine = send_data(stream_socket, file_path, port, bytes_counters, total_bytes_counter, packets_counters, total_packets_counter)
+            coroutines.append(coroutine)
+
+        await asyncio.gather(*coroutines)
+
+    finally:
+        client_socket.sendto(f"CLOSE".encode(), server_address)  # Notify receiver of port
+        # Close socket
+        client_socket.close()
+
+        # Print total bytes passed in each flow
+        # print(f"Total bytes passed in each flow: {total_bytes_counter[0]}")
+
+if __name__ == "__main__":
+    file_path = 'example.txt'
+    num_streams = 5  # Number of streams to use
+    asyncio.run(send_file(file_path, num_streams))
